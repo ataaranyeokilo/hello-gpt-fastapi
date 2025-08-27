@@ -34,9 +34,4 @@ The goal is to build a simple, production-ready foundation for more advanced Gen
 
 ---
 
-## 🚀 Getting Started
 
-### 1. Clone the Repository
-```bash
-git clone https://github.com/YOUR-USERNAME/hello-gpt-fastapi.git
-cd hello-gpt-fastapi

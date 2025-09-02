@@ -1,27 +1,29 @@
+# azure_client.py
 from openai import AzureOpenAI
+from openai import (  # exception types
+    APIError, RateLimitError, APITimeoutError, APIConnectionError,
+    AuthenticationError, BadRequestError, OpenAIError
+)
 import config
 import time
 import logging
-from openai import (  # exception types
-    APIError, RateLimitError, APITimeoutError, APIConnectionError,
-    AuthenticationError, BadRequestError
-)
-
+from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
-
-# Init client once
-client = AzureOpenAI(
-    api_key=config.AZURE_OPENAI_KEY,
-    api_version=config.AZURE_OPENAI_API_VERSION,
-    azure_endpoint=config.AZURE_OPENAI_ENDPOINT,
-)
+@lru_cache(maxsize=1)
+def get_client() -> AzureOpenAI:
+    """Create the Azure OpenAI client on first use (cached thereafter)."""
+    return AzureOpenAI(
+        api_key=config.AZURE_OPENAI_KEY,
+        api_version=config.AZURE_OPENAI_API_VERSION,
+        azure_endpoint=config.AZURE_OPENAI_ENDPOINT,
+    )
 
 def ask_gpt(question: str, *, timeout: float = 20.0, max_retries: int = 2) -> str:
     """
     Send a question to Azure OpenAI with simple retries and timeouts.
-    Raises RuntimeError with user-friendly message on failure.
+    Raises RuntimeError with a user-friendly message on failure.
     """
     q = (question or "").strip()
     if not q:
@@ -33,14 +35,17 @@ def ask_gpt(question: str, *, timeout: float = 20.0, max_retries: int = 2) -> st
     while True:
         attempt += 1
         try:
+            # Lazy init happens here:
+            client = get_client()
+
             resp = client.chat.completions.create(
-                model=config.AZURE_OPENAI_DEPLOYMENT,       # or drop if your endpoint already encodes deployment
+                model=config.AZURE_OPENAI_DEPLOYMENT,
                 messages=[
                     {"role": "system", "content": "You are a helpful assistant."},
                     {"role": "user", "content": q},
                 ],
                 max_tokens=400,
-                timeout=timeout,  # <- request-level timeout (seconds)
+                timeout=timeout,  # request-level timeout (seconds)
             )
             return resp.choices[0].message.content
 
@@ -69,6 +74,11 @@ def ask_gpt(question: str, *, timeout: float = 20.0, max_retries: int = 2) -> st
         except APIError as e:
             logger.exception(f"[ask_gpt] generic API error: {e}")
             raise RuntimeError("Azure OpenAI error occurred. Please try again.")
+
+        except OpenAIError as e:
+            # Covers constructor/config issues, etc.
+            logger.exception(f"[ask_gpt] OpenAI SDK error: {e}")
+            raise RuntimeError("Azure OpenAI client is misconfigured. Check endpoint, key, and deployment.")
 
         except Exception as e:
             logger.exception(f"[ask_gpt] unexpected error: {e}")

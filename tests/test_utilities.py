@@ -1,35 +1,32 @@
+# tests/test_utilities.py
+import types
 import pytest
-import requests
 import azure_client
 
+# --- happy path: no network, fully mocked ---
+class FakeCompletions:
+    def create(self, **kwargs):
+        return types.SimpleNamespace(
+            choices=[types.SimpleNamespace(message=types.SimpleNamespace(content="mocked reply"))]
+        )
 
-def test_ask_llm_success(monkeypatch):
-    """ask_llm should return text when API responds with choices."""
+class FakeClient:
+    chat = types.SimpleNamespace(completions=FakeCompletions())
 
-    class DummyResponse:
-        def raise_for_status(self): return None
-        def json(self):
-            return {"choices": [{"message": {"content": "mocked reply"}}]}
+def test_ask_gpt_success(monkeypatch):
+    # swap the real SDK client for our fake
+    monkeypatch.setattr(azure_client, "get_client", lambda: FakeClient())
+    assert azure_client.ask_gpt("Hello") == "mocked reply"
 
-    def fake_post(url, headers, json):  # mimic requests.post
-        return DummyResponse()
+# --- failure path: ensure we surface RuntimeError cleanly ---
+class BoomCompletions:
+    def create(self, **kwargs):
+        raise Exception("boom")  # triggers our catch-all → RuntimeError
 
-    monkeypatch.setattr(requests, "post", fake_post)
+class BoomClient:
+    chat = types.SimpleNamespace(completions=BoomCompletions())
 
-    result = azure_client.ask_llm("Hello")
-    assert result == "mocked reply"
-
-
-def test_ask_llm_failure(monkeypatch):
-    """ask_llm should raise when API errors out."""
-
-    class DummyResponse:
-        def raise_for_status(self): raise requests.HTTPError("boom")
-
-    def fake_post(url, headers, json):
-        return DummyResponse()
-
-    monkeypatch.setattr(requests, "post", fake_post)
-
-    with pytest.raises(requests.HTTPError):
-        azure_client.ask_llm("Hello")
+def test_ask_gpt_failure(monkeypatch):
+    monkeypatch.setattr(azure_client, "get_client", lambda: BoomClient())
+    with pytest.raises(RuntimeError):
+        azure_client.ask_gpt("Hello")
